@@ -14,8 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 WORK = Path(os.environ.get("TD_EDITOR_WORK", ROOT / ".work"))
 WORK.mkdir(exist_ok=True)
-TOKEN_FILE = Path(os.environ.get("QWEN3_TTS_TOKEN_FILE", "/home/hang010412/.config/qwen3-tts-lan-api/api-token"))
+TOKEN_FILE = Path(os.environ.get("QWEN3_TTS_TOKEN_FILE", str(Path.home() / ".config/qwen3-tts-lan-api/api-token")))
 TTS_URL = os.environ.get("QWEN3_TTS_URL", "http://127.0.0.1:18791/v1/services/base-local3060/audio/speech")
+PORT = int(os.environ.get("TD_EDITOR_PORT", "18792"))
 MAX_UPLOAD = 2 * 1024**3
 
 
@@ -214,5 +215,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("Editor: http://127.0.0.1:18792", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", 18792), Handler).serve_forever()
+    print(f"Editor: http://127.0.0.1:{PORT}", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

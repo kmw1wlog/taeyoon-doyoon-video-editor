@@ -10,7 +10,7 @@
 bash run.sh
 ```
 
-브라우저에서 `http://127.0.0.1:18792`를 엽니다. Python 3, FFmpeg, FFprobe가 필요합니다. 기존 Qwen3 TTS LAN 게이트웨이가 실행 중이어야 합니다. 서버는 기본적으로 `127.0.0.1:18791`의 `base-local3060` 엔진과 로컬 토큰 파일을 사용합니다. 다른 환경이라면 `QWEN3_TTS_URL`, `QWEN3_TTS_TOKEN_FILE`, `TD_EDITOR_WORK` 환경 변수를 설정합니다. 인증 토큰은 브라우저로 전달하지 않습니다.
+브라우저에서 `http://127.0.0.1:18792`를 엽니다. Python 3, FFmpeg, FFprobe가 필요합니다. 기존 Qwen3 TTS LAN 게이트웨이가 실행 중이어야 합니다. 서버는 기본적으로 `127.0.0.1:18791`의 `base-local3060` 엔진과 사용자 홈의 `.config/qwen3-tts-lan-api/api-token` 파일을 사용합니다. 다른 환경이라면 `QWEN3_TTS_URL`, `QWEN3_TTS_TOKEN_FILE`, `TD_EDITOR_WORK`, `TD_EDITOR_PORT` 환경 변수를 설정합니다. 인증 토큰은 브라우저로 전달하지 않습니다.
 
 ## 편집 순서
 
