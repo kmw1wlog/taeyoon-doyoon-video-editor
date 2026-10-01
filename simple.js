@@ -3,6 +3,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const scenes = JSON.parse(sessionStorage.getItem('td_scenes') || '[]');
 let extraClips = JSON.parse(sessionStorage.getItem('td_extra') || '[]');
 let plan = null;
+const imageFiles = new Map();
 const invalidatePlan = () => { plan=null; $('editResult').classList.add('hidden'); };
 const save = () => { sessionStorage.setItem('td_scenes', JSON.stringify(scenes.map(({image,...scene}) => scene))); sessionStorage.setItem('td_extra', JSON.stringify(extraClips)); };
 const clips = () => [...scenes.filter(s => s.clip).map(s => ({...s.clip, name:`장면 ${scenes.indexOf(s)+1}`,prompt:s.prompt})), ...extraClips];
@@ -15,11 +16,61 @@ function draw(){
 }
 function sceneOf(element){return scenes.find(s=>s.id===element.closest('.scene')?.dataset.id);}
 $('addScene').onclick=()=>{scenes.push({id:crypto.randomUUID(),prompt:'',duration:5,status:''});save();draw();};
+const imageOrder=(a,b)=>a.name.localeCompare(b.name,'ko',{numeric:true});
+const parseBatchPrompts=text=>{
+  const separated=text.split(/^\s*---\s*$/m).map(value=>value.trim()).filter(Boolean);
+  return separated.length>1?separated:text.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
+};
+const readImage=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error(`${file.name} 사진을 읽을 수 없습니다.`));reader.readAsDataURL(file);});
+function batchNote(message,error=false){$('batchStatus').textContent=message;$('batchStatus').classList.toggle('error',error);}
+$('batchImages').onchange=()=>{
+  const files=[...$('batchImages').files].sort(imageOrder);
+  $('batchFileNames').textContent=files.length?`${files.length}장: ${files.map(file=>file.name).join(' → ')}`:'파일명 순서대로 프롬프트와 연결됩니다.';
+};
+$('batchGenerate').onclick=async()=>{
+  const files=[...$('batchImages').files].sort(imageOrder);
+  const prompts=files.length===1?[$('batchPrompts').value.trim()].filter(Boolean):parseBatchPrompts($('batchPrompts').value);
+  const key=$('minimaxKey').value.trim();
+  if(!key)return batchNote('먼저 API 키 설정에서 MiniMax 키를 입력하세요.',true);
+  if(!files.length||prompts.length!==files.length)return batchNote(`시작 사진 ${files.length}장과 프롬프트 ${prompts.length}개의 개수를 맞춰 주세요.`,true);
+  if(files.some(file=>!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>30*1024*1024))return batchNote('사진은 30MB 이하 JPG·PNG·WEBP만 선택하세요.',true);
+  $('batchGenerate').disabled=true;
+  batchNote(`${files.length}개 장면을 준비하는 중…`);
+  try{
+    if(scenes.length===1&&!scenes[0].prompt&&!scenes[0].image&&!scenes[0].clip&&!scenes[0].taskId)scenes.pop();
+    const added=files.map((file,index)=>{const scene={id:crypto.randomUUID(),image:URL.createObjectURL(file),prompt:prompts[index],duration:Number($('batchDuration').value),status:`${file.name} · 생성 대기`};imageFiles.set(scene.id,file);return scene;});
+    scenes.push(...added);invalidatePlan();save();draw();
+    let submitted=0;
+    for(const scene of added){
+      batchNote(`${submitted+1}/${added.length} 장면 요청 중…`);
+      if(await submitScene(scene)){
+        submitted++;
+        poll(scene).finally(()=>{scene.busy=false;draw();});
+      }
+    }
+    batchNote(`${submitted}/${added.length}개 생성 요청 완료. 각 영상의 완성을 자동 확인합니다.`,submitted!==added.length);
+    $('batchImages').value='';$('batchPrompts').value='';$('batchFileNames').textContent='파일명 순서대로 프롬프트와 연결됩니다.';
+  }catch(error){batchNote(error.message,true);}
+  finally{$('batchGenerate').disabled=false;}
+};
 $('sceneList').oninput=event=>{const s=sceneOf(event.target);if(!s)return;if(event.target.matches('.scene-prompt'))s.prompt=event.target.value;if(event.target.matches('.scene-duration'))s.duration=Number(event.target.value);save();};
-$('sceneList').onchange=event=>{if(!event.target.matches('.scene-image'))return;const s=sceneOf(event.target),file=event.target.files[0];if(!file)return;if(file.size>30*1024*1024){s.status='사진은 30MB 이하여야 합니다.';s.error=true;draw();return;}const reader=new FileReader();reader.onload=()=>{s.image=reader.result;s.status='사진 준비 완료';s.error=false;draw();};reader.readAsDataURL(file);};
-$('sceneList').onclick=event=>{const s=sceneOf(event.target);if(!s)return;if(event.target.matches('.remove')){scenes.splice(scenes.indexOf(s),1);invalidatePlan();save();draw();return;}if(event.target.matches('.scene-generate'))generate(s);};
+$('sceneList').onchange=event=>{if(!event.target.matches('.scene-image'))return;const s=sceneOf(event.target),file=event.target.files[0];if(!file)return;if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>30*1024*1024){s.status='30MB 이하 JPG·PNG·WEBP 사진을 선택하세요.';s.error=true;draw();return;}if(s.image?.startsWith('blob:'))URL.revokeObjectURL(s.image);s.image=URL.createObjectURL(file);imageFiles.set(s.id,file);s.status='사진 준비 완료';s.error=false;draw();};
+$('sceneList').onclick=event=>{const s=sceneOf(event.target);if(!s)return;if(event.target.matches('.remove')){if(s.image?.startsWith('blob:'))URL.revokeObjectURL(s.image);imageFiles.delete(s.id);scenes.splice(scenes.indexOf(s),1);invalidatePlan();save();draw();return;}if(event.target.matches('.scene-generate'))generate(s);};
 function refreshScene(s,message,error=false){s.status=message;s.error=error;save();draw();}
-async function generate(s){const key=$('minimaxKey').value.trim();if(!key)return refreshScene(s,'API 키 설정에서 MiniMax 키를 입력하세요.',true);if(s.clip&&(!s.image||!s.prompt.trim()))return refreshScene(s,'다시 만들려면 시작 사진과 프롬프트를 확인하세요.',true);if(s.clip){s.clip=null;s.taskId=null;invalidatePlan();}if(!s.taskId&&(!s.image||!s.prompt.trim()))return refreshScene(s,'시작 사진과 H3 프롬프트를 모두 넣으세요.',true);s.busy=true;refreshScene(s,s.taskId?'생성 상태 확인 중…':'MiniMax H3에 영상 생성 요청 중…');try{if(!s.taskId){const result=await post('/api/h3/generate',{key,prompt:s.prompt,image:s.image,duration:s.duration});s.taskId=result.taskId;refreshScene(s,'생성 중…');}await poll(s);}catch(error){refreshScene(s,error.message,true);}finally{s.busy=false;draw();}}
+async function submitScene(s){
+  const key=$('minimaxKey').value.trim();
+  if(!key){refreshScene(s,'API 키 설정에서 MiniMax 키를 입력하세요.',true);return false;}
+  if(s.clip&&(!s.image||!s.prompt.trim())){refreshScene(s,'다시 만들려면 시작 사진과 프롬프트를 확인하세요.',true);return false;}
+  if(s.clip){s.clip=null;s.taskId=null;invalidatePlan();}
+  if(!s.taskId&&(!s.image||!s.prompt.trim())){refreshScene(s,'시작 사진과 H3 프롬프트를 모두 넣으세요.',true);return false;}
+  s.busy=true;
+  refreshScene(s,s.taskId?'생성 상태 확인 중…':'MiniMax H3에 영상 생성 요청 중…');
+  try{
+    if(!s.taskId){const image=imageFiles.has(s.id)?await readImage(imageFiles.get(s.id)):s.image;const result=await post('/api/h3/generate',{key,prompt:s.prompt,image,duration:s.duration});s.taskId=result.taskId;refreshScene(s,'생성 중…');}
+    return true;
+  }catch(error){refreshScene(s,error.message,true);s.busy=false;draw();return false;}
+}
+async function generate(s){if(!await submitScene(s))return;try{await poll(s);}finally{s.busy=false;draw();}}
 async function poll(s){let wait=5000;while(s.taskId&&!s.clip&&scenes.includes(s)){await new Promise(resolve=>setTimeout(resolve,wait));let result;try{result=await post('/api/h3/status',{key:$('minimaxKey').value.trim(),taskId:s.taskId});wait=5000;}catch(error){refreshScene(s,`상태 확인 대기: ${error.message}`,true);wait=Math.min(wait*2,60000);continue;}if(result.status==='succeeded'){s.clip=result.clip;invalidatePlan();refreshScene(s,'영상 완성! 아래 목록에 자동 추가됐습니다.');note('완성 영상이 추가되었습니다. ChatGPT 편집을 진행할 수 있습니다.');return;}if(['failed','cancelled'].includes(result.status)){s.taskId=null;refreshScene(s,`생성 실패: ${result.error||result.status}`,true);return;}refreshScene(s,result.status==='running'?'영상 생성 중…':'생성 대기 중…');}}
 $('extraVideos').onchange=async event=>{for(const file of event.target.files){if(!file.type.startsWith('video/'))continue;note(`${file.name} 가져오는 중…`);try{const result=await post('/api/upload',file,true);extraClips.push({...result,name:file.name,prompt:''});invalidatePlan();save();draw();}catch(error){note(error.message,true);}}note('기존 영상이 추가되었습니다.');};
 $('aiEdit').onclick=async()=>{const all=clips(),key=$('openaiKey').value.trim(),instruction=$('editInstruction').value.trim();if(!all.length||!key||!instruction)return note('완성 영상, OpenAI API 키, 편집 지시를 입력하세요.',true);$('aiEdit').disabled=true;note('ChatGPT가 완성 영상을 보고 편집안을 만드는 중…');try{plan=await post('/api/ai/edit',{key,instruction,clips:all});const names=Object.fromEntries(all.map(c=>[c.id,c.name]));$('editResult').classList.remove('hidden');$('editResult').innerHTML=`<p>${esc(plan.summary)}</p><ol>${plan.clips.map(c=>`<li>${esc(names[c.id]||c.id)} · ${Number(c.start).toFixed(1)}–${Number(c.end).toFixed(1)}초</li>`).join('')}</ol><p>음소거 ${plan.mutes.length}구간 · 아래 버튼으로 이 편집안을 MP4로 만듭니다.</p>`;note('편집안이 적용되었습니다. MP4를 내려받을 수 있습니다.');}catch(error){note(`ChatGPT 편집 실패: ${error.message}`,true);}finally{$('aiEdit').disabled=false;}};
