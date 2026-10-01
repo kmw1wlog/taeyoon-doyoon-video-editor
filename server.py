@@ -10,6 +10,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from workflow import download_h3, edit_plan, h3_status, start_h3
 
 ROOT = Path(__file__).resolve().parent
 WORK = Path(os.environ.get("TD_EDITOR_WORK", ROOT / ".work"))
@@ -65,6 +66,15 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/editor.js":
             body = (ROOT / "editor.js").read_bytes()
             kind = "text/javascript; charset=utf-8"
+        elif self.path == "/simple.js":
+            body = (ROOT / "simple.js").read_bytes()
+            kind = "text/javascript; charset=utf-8"
+        elif self.path == "/simple.css":
+            body = (ROOT / "simple.css").read_bytes()
+            kind = "text/css; charset=utf-8"
+        elif self.path == "/advanced":
+            body = (ROOT / "advanced.html").read_bytes()
+            kind = "text/html; charset=utf-8"
         elif self.path.startswith("/media/"):
             try:
                 path = media_path(self.path.removeprefix("/media/"))
@@ -135,6 +145,25 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(size))
             if self.path == "/api/tts":
                 return self.tts(payload)
+            if self.path == "/api/h3/generate":
+                task_id = start_h3(str(payload.get("key", "")), str(payload.get("prompt", "")), payload.get("image"), payload.get("duration"))
+                return self.reply(200, {"taskId": task_id})
+            if self.path == "/api/h3/status":
+                result = h3_status(str(payload.get("key", "")), str(payload.get("taskId", "")))
+                if result["status"] == "succeeded":
+                    media_id = uuid.uuid4().hex
+                    path = WORK / (media_id + ".mp4")
+                    try:
+                        download_h3(result["url"], path)
+                        duration = probe(path)
+                    except Exception:
+                        path.unlink(missing_ok=True)
+                        raise
+                    result["clip"] = {"id": media_id, "url": "/media/" + media_id, "duration": duration}
+                return self.reply(200, result)
+            if self.path == "/api/ai/edit":
+                plan = edit_plan(str(payload.get("key", "")), str(payload.get("instruction", "")), payload.get("clips", []), media_path)
+                return self.reply(200, plan)
             if self.path == "/api/export":
                 return self.export(payload)
             self.reply(404, {"error": "not_found"})
@@ -169,7 +198,7 @@ class Handler(BaseHTTPRequestHandler):
         clips = data["clips"]
         if not clips or len(clips) > 100:
             raise ValueError("영상 클립을 추가하세요")
-        total = sum(float(item["duration"]) for item in clips)
+        total = sum(float(item["end"] if "end" in item else item["duration"]) - float(item.get("start", 0)) for item in clips)
         if total > 3600:
             raise ValueError("최대 길이는 1시간입니다")
         export_id = uuid.uuid4().hex
@@ -183,10 +212,12 @@ class Handler(BaseHTTPRequestHandler):
         filters = []
         offset = 0.0
         for i, clip in enumerate(clips):
-            duration = min(float(clip["duration"]), probe(media_path(clip["id"])))
-            if duration <= 0:
-                raise ValueError("영상 길이가 잘못되었습니다")
-            filters.append(f"[{i}:v]trim=duration={duration},setpts=PTS-STARTPTS,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v{i}]")
+            source_start = float(clip.get("start", 0))
+            source_end = float(clip["end"] if "end" in clip else clip["duration"])
+            duration = source_end - source_start
+            if source_start < 0 or duration <= 0 or source_end > probe(media_path(clip["id"])) + 0.05:
+                raise ValueError("영상 자르기 범위가 잘못되었습니다")
+            filters.append(f"[{i}:v]trim=start={source_start}:end={source_end},setpts=PTS-STARTPTS,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v{i}]")
             mutes = []
             for interval in data.get("mutes", []):
                 a = max(0, float(interval["start"]) - offset)
@@ -195,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
                     mutes.append(f"volume=enable='between(t,{a},{b})':volume=0")
             audio_filters = ",".join(mutes)
             if has_audio(media_path(clip["id"])):
-                filters.append(f"[{i}:a]atrim=duration={duration},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo{',' + audio_filters if audio_filters else ''}[a{i}]")
+                filters.append(f"[{i}:a]atrim=start={source_start}:end={source_end},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo{',' + audio_filters if audio_filters else ''}[a{i}]")
             else:
                 filters.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={duration},asetpts=PTS-STARTPTS[a{i}]")
             offset += duration

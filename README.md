@@ -1,34 +1,28 @@
-# 태윤·도윤 로컬 영상 편집실
+# 태윤·도윤 스토리보드 영상 만들기
 
-두 참고 사진의 미디어 패널, 미리보기, 타임라인, 음성 구간 편집 구조를 바탕으로 만든 가벼운 HTML 편집기입니다. 영상을 선택한 순서대로 배치하고, 타임라인에서 순서를 바꾸며, 원본 음성의 원하는 구간을 음소거하고, 영상 속 태윤·도윤 목소리를 참조한 Qwen3 TTS 대사를 넣거나 교체할 수 있습니다.
+간단한 로컬 HTML 인터페이스입니다. 각 장면에 시작 사진과 **외부에서 준비한 MiniMax H3 프롬프트**를 넣고 `영상 만들기`를 누릅니다. 완성 클립이 순서대로 모이면 ChatGPT 편집 지시를 입력하고 MP4를 내보냅니다. 기존 수동 타임라인은 `/advanced`에 있습니다.
 
 ## 실행
 
-이 디렉터리에서:
+Python 3, FFmpeg, FFprobe가 필요합니다.
 
 ```bash
 bash run.sh
 ```
 
-브라우저에서 `http://127.0.0.1:18792`를 엽니다. Python 3, FFmpeg, FFprobe가 필요합니다. 기존 Qwen3 TTS LAN 게이트웨이가 실행 중이어야 합니다. 서버는 기본적으로 `127.0.0.1:18791`의 `base-local3060` 엔진과 사용자 홈의 `.config/qwen3-tts-lan-api/api-token` 파일을 사용합니다. 다른 환경이라면 `QWEN3_TTS_URL`, `QWEN3_TTS_TOKEN_FILE`, `TD_EDITOR_WORK`, `TD_EDITOR_PORT` 환경 변수를 설정합니다. 인증 토큰은 브라우저로 전달하지 않습니다.
+브라우저에서 `http://127.0.0.1:18792`를 엽니다. `run.sh`는 서버가 종료되면 대기 후 다시 시작합니다. `TD_EDITOR_PORT`로 포트를 바꿀 수 있습니다.
 
-## 편집 순서
+1. `API 키 설정`에서 MiniMax API 키를 입력합니다. ChatGPT 편집까지 하려면 OpenAI API 키도 입력합니다. **ChatGPT 웹 구독과 OpenAI API 키는 별개입니다.** 키는 브라우저 실행 메모리와 해당 요청에만 사용되며 디스크·프로젝트 파일·GitHub에 저장하지 않습니다.
+2. 장면마다 JPG·PNG·WEBP 시작 사진과 준비된 H3 프롬프트를 입력합니다. `영상 만들기`가 MiniMax 공식 `MiniMax-H3` API에 작업을 제출하고 상태를 자동 확인합니다. 작업 ID는 브라우저 세션에 보존하므로 새로고침 후 키를 다시 입력하고 `상태 다시 확인`을 누를 수 있습니다.
+3. 완성 클립이 순서대로 표시됩니다. 기존 MP4도 추가할 수 있습니다.
+4. ChatGPT 편집 지시를 입력하면 대표 프레임과 생성 프롬프트를 바탕으로 클립 순서, 앞뒤 자르기, 원본 음소거 구간을 제안합니다. 화면에서 편집안을 확인한 뒤 MP4를 내보냅니다. ChatGPT는 이 경로에서 클립의 **음성을 듣지 않습니다.** 특정 대사를 제거하려면 시간을 지정하세요. 수동 음성 교체·Qwen3 TTS는 `/advanced`에서 이용할 수 있습니다.
 
-1. 영상 여러 개를 가져옵니다. 파일 선택 순서대로 자동 배치되며 타임라인 영상 블록을 드래그하여 순서를 바꿀 수 있습니다.
-2. 태윤/도윤을 선택하고, 해당 화자가 말하는 영상 및 1~30초 참조 구간을 지정합니다. **참조 구간에서 실제로 들리는 대본**을 입력합니다.
-3. 삽입할 대사와 시작 위치를 입력합니다. `기존 음성 교체`를 선택하면 지정한 구간의 원본 음성이 음소거되고 TTS 음성이 추가됩니다.
-4. 별도로 지울 음성은 `불필요한 음성 제거`에서 시작·끝 시간을 지정합니다.
-5. 미리보기를 확인한 뒤 MP4를 내보냅니다. 프로젝트 JSON을 저장하면 동일한 로컬 서버의 미디어 파일을 참조해 다시 열 수 있습니다.
+MiniMax H3 영상 생성은 유료 API 호출입니다. `MiniMax-H3`의 사진 시작 프레임은 공식 `POST /v2/video_generation`의 `content` 배열에 `role=first_frame`으로 전송하며, 공식 `GET /v2/query/video_generation/{task_id}`로 결과를 조회합니다. OpenAI 편집은 Responses API의 구조화된 JSON 응답을 검증한 후 로컬 FFmpeg에 전달합니다. 두 서비스의 키는 로컬 서버를 경유하며 외부에는 각각 해당 서비스 요청 때만 전송됩니다.
 
-참조 음성에는 실제 해당 화자만 말하는 깨끗한 구간을 사용해야 결과가 안정적입니다. 현재 음소거는 지정 시간의 **원본 전체 오디오**에 적용됩니다. 두 사람이 겹쳐 말하는 영상에서 한 화자만 분리해 제거하는 기능은 포함하지 않습니다. 미리보기는 브라우저 재생이므로 내보낸 MP4를 최종 확인하세요.
+API 요청 주소는 `MINIMAX_API_BASE`, 편집 모델은 `OPENAI_EDIT_MODEL` 환경 변수로 변경할 수 있습니다. TTS 수동 편집은 기존 `QWEN3_TTS_URL`, `QWEN3_TTS_TOKEN_FILE`을 사용합니다. 미디어 작업 디렉터리는 `TD_EDITOR_WORK`로 지정할 수 있습니다.
 
-## 검토한 오픈소스
+## 공식 문서
 
-| 프로젝트 | 역할과 판단 |
-| --- | --- |
-| [OpenCut](https://github.com/opencutvideo/Opencut) | 웹 타임라인 편집기 참고. 이 작업에는 전체 편집기보다 작은 전용 UI가 적합해 의존성으로 넣지 않았습니다. |
-| [OpenReel](https://github.com/afatabe/openreel) | 브라우저 다중 트랙 편집 구조 참고. |
-| [MediaBunny](https://github.com/Vanilagy/mediabunny) | 브라우저 미디어 처리 대안. 현재는 로컬 FFmpeg 내보내기가 더 단순합니다. |
-| [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) | 참조 음성 기반 음성 복제. 기존 저장소의 Qwen3 TTS Base API를 사용합니다. |
-
-이들 프로젝트의 코드는 복사하지 않았습니다.
+- [MiniMax H3 영상 생성 API](https://platform.minimax.io/docs/api-reference/video-generation-v2-create)
+- [MiniMax H3 작업 조회 API](https://platform.minimax.io/docs/api-reference/video-generation-v2-query)
+- [OpenAI 구조화 출력](https://developers.openai.com/api/docs/guides/structured-outputs)
